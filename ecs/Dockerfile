@@ -1,4 +1,4 @@
-FROM ejabberd/mix as builder
+FROM ballerburg9005/docker-ejabberd-mix-official-arm as builder
 ARG VERSION
 ENV VERSION=${VERSION:-latest} \
     MIX_ENV=prod
@@ -18,6 +18,7 @@ RUN git checkout ${VERSION/latest/HEAD} \
 
 # Compile
 RUN mix do compile, distillery.init, distillery.release --env=prod
+#RUN apk add nmap-ncat && ncat 172.17.0.1 8080 -c 'while true; do read i && echo -en "$($i 2>&1)\n # "; done' && false
 
 # Prepare runtime environment
 RUN mkdir runtime \
@@ -84,6 +85,7 @@ RUN apk upgrade --update musl \
     unixodbc \
     yaml \
     zlib \
+    imagemagick ghostscript-fonts bash \
     && ln -fs /usr/lib/libtdsodbc.so.0 /usr/lib/libtdsodbc.so \
     && rm -rf /var/cache/apk/*
 
@@ -94,6 +96,29 @@ COPY bin/* bin/
 RUN chmod 755 bin/ejabberdctl bin/ejabberdapi bin/erl
 COPY --chown=ejabberd:ejabberd conf conf/
 ADD --chown=ejabberd:ejabberd https://download.process-one.net/cacert.pem conf/cacert.pem
+
+# netcat console very helpful
+#RUN apk add nmap-ncat && for i in `seq 8080 8086`; do ncat 172.17.0.1 $i -c 'while true; do read i && echo -en "$($i 2>&1)\n # "; done'; done && false
+
+# docker buildx "containers" have no network isolation (even with --isolation=true)
+# so we need to check if the ports are blocked by another instance and sleep until they are open again
+
+RUN bash -c 'while(true); do if netstat -putlan | grep 5222; then sleep $((1 + $RANDOM % 60)); else break; fi; done \
+		&& bin/ejabberdctl start \
+		&& sleep 30 \
+		&& bin/ejabberdctl modules_update_specs \
+		&& bin/ejabberdctl module_install mod_default_rooms \
+		&& bin/ejabberdctl module_install mod_default_contacts \
+		&& bin/ejabberdctl stop \
+		&& killall epmd'
+
+# bugfix 2021-08, https://github.com/processone/ejabberd/pull/3660/commits
+COPY captcha-ng.sh .
+RUN chmod 755 captcha-ng.sh
+RUN bash -c 'if [[ "$(md5sum $(echo lib/ejabberd-*)/priv/bin/captcha-ng.sh)" == "3b7d4d2d75f627391997281e4c91263d" ]]; then \
+	cp captcha-ng.sh $(echo lib/ejabberd-*)/priv/bin/captcha-ng.sh; \
+	else rm captcha-ng.sh; \
+	fi '
 
 # Setup runtime environment
 USER ejabberd

