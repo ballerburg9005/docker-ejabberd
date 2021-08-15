@@ -11,7 +11,7 @@ How to build the official Docker images
 =======================================
 
 1. docker buildx build --platform linux/arm64,linux/armhf,linux/amd64 --push -t ballerburg9005/docker-ejabberd-mix-official-arm mix
-2. docker buildx build --platform linux/arm64,linux/armhf,linux/amd64 --build-arg VERSION=${1:-$(date +%y%m -d '1 month ago')} --build-arg VCS_REF=\`git rev-parse --short HEAD\` --build-arg BUILD_DATE=\`date -u +"%Y-%m-%dT%H:%M:%SZ"'\` --push -t ballerburg9005/docker-ejabberd-ecs-official-arm ecs
+2. docker buildx build --platform linux/arm64,linux/armhf,linux/amd64 --build-arg VERSION=${1:-$(date +%y%m -d '1 month ago')} --build-arg VCS_REF=\`git rev-parse --short HEAD\` --build-arg BUILD_DATE=\`date -u +"%Y-%m-%dT%H:%M:%SZ"'\` --push -t ballerburg9005/docker-ejabberd-ecs-official-arm ecs #this is the command from ecs/build.sh
 
 
 If buildx is not working for you, try this quick tutorial to set it up:
@@ -24,12 +24,14 @@ https://ballerburg.us.to/index.php/howto-multi-architecture-builds-in-docker/
   
 .
   
-In order to build against ARM, you simply have to adapt the three corresponding lines in build.sh and the Dockerfile inside the ecs folder like suggested:
+In order to build ejabberd with ARM included, you simply have to adapt the three corresponding lines in build.sh and the Dockerfile inside the ecs folder like suggested:
 
 1. FROM ballerburg9005/docker-ejabberd-mix-official-arm as builder
 2. current=$(date +%y.07) # I had to use the previous month "07" in the version string, because there was not a git branch yet for this month
 3. docker buildx build --platform linux/arm64,linux/armhf 
 
+First build the mix image using buildx like suggested in #3, and then the ecs image via ./build.sh
+	
 If you want the captcha, you have to add the packages suggested in the Readme to the list of packages in the ecs image at the end (not mix!).
 
 Also you can add those extra modules. Add this right before setup runtime environment:
