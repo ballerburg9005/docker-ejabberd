@@ -24,13 +24,13 @@ https://ballerburg.us.to/index.php/howto-multi-architecture-builds-in-docker/
   
 .
   
-In order to build ejabberd with ARM included, you simply have to adapt the three corresponding lines in build.sh and the Dockerfile inside the ecs folder like suggested:
+In order to build ejabberd with ARM included, you simply have to adapt some three corresponding lines in build.sh and the Dockerfile inside the ecs folder:
 
 1. FROM ballerburg9005/docker-ejabberd-mix-official-arm as builder
 2. current=$(date +%y.07) # I had to use the previous month "07" in the version string, because there was not a git branch yet for this month
 3. docker buildx build --platform linux/arm64,linux/armhf 
 
-First build the mix image using buildx like suggested in #3, and then the ecs image via ./build.sh
+First build the mix image using buildx like suggested in #3, and then the ecs image via ./build.sh with your mix image referenced as demonstrated in #1.
 	
 If you want the captcha, you have to add the packages suggested in the Readme to the list of packages in the ecs image at the end (not mix!).
 
