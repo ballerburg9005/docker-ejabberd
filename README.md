@@ -1,8 +1,12 @@
-This repository is just a fork of [the official Docker build of ejabberd](https://github.com/processone/docker-ejabberd).
+What is this?
+=============
 
-You will find more instructions there for the ecs image. The mix image doesn't even contain ejabberd.
+This repository is just a fork with minor modifications of [the official Docker build of ejabberd](https://github.com/processone/docker-ejabberd).
 
-More information from myself not covered by the official guides: https://hub.docker.com/repository/docker/ballerburg9005/docker-ejabberd-ecs-official-arm
+You will find more instructions there.
+
+Check out the Readme I wrote on Dockerhub for more important information: https://hub.docker.com/repository/docker/ballerburg9005/docker-ejabberd-ecs-official-arm
+
 
 How to build the official Docker images
 =======================================
