@@ -5,8 +5,7 @@ This repository is just a fork with minor modifications of [the official Docker 
 
 You will find more instructions there.
 
-Check out the Readme I wrote on Dockerhub for more important information: https://hub.docker.com/repository/docker/ballerburg9005/docker-ejabberd-ecs-official-arm
-
+Check out the [Readme](https://hub.docker.com/repository/docker/ballerburg9005/docker-ejabberd-ecs-official-arm) I wrote on Dockerhub for more important information.
 
 How to build the official Docker images
 =======================================
