@@ -42,16 +42,31 @@ cd ecs
 ```
 
 Both commands publish the MIX builder image **first**, then the ECS runtime
-image. To work around Docker Hub `invalid content range` errors during large
-concurrent exports, each platform is **pushed individually** (for example,
-`:26.09-arm64`), with up to three retries. After all platforms are present,
-`docker buildx imagetools create` publishes the normal multi-platform tags:
-`:26.09` and `:latest`. The old unversioned Docker Hub pull command still works.
-This preserves the BuildKit cache, so restarting after a failed upload does not
-normally recompile the successfully cached layers. Override retry count with
-`PUSH_ATTEMPTS=5` or delay with `PUSH_RETRY_DELAY=30` if required.
-Buildx provenance and SBOM attestations are disabled for the publish step to
-avoid extra upload manifests; no runtime features are changed.
+image. By default (`PUBLISH_MODE=auto`), Buildx builds all architectures
+**in parallel** and pushes one multi-platform manifest (the fast path). Only
+if Docker Hub fails the combined upload does it fall back to independent
+per-platform pushes followed by `imagetools create`. Use `PUBLISH_MODE=parallel`
+to retry the parallel upload without falling back, or `PUBLISH_MODE=split`
+to force separate platform uploads from the start.
+
+The two normal Docker Hub tags remain `:26.09` and `:latest`. The fallback
+also creates diagnostic per-platform tags such as `:26.09-arm64`. All paths
+preserve the selected Buildx builder's cache. **BuildKit caches are not
+necessarily shared between the default Docker builder and a named
+docker-container builder, or between different users.** Keep the same
+`docker buildx use ...` selection across invocations.
+
+For subsequent ECS-only rebuilds when the MIX `:26.09` manifest **has
+already been fully published**, omit rebuilding MIX:
+
+```sh
+SKIP_MIX=1 ./build-multiarch.sh 26.09
+```
+
+Changing `BUILD_DATE` or `VCS_REF` now changes only the last ECS image
+metadata layer and does not invalidate dependency compilation. Retries for
+fallback platform pushes are configurable with `PUSH_ATTEMPTS=5` and
+`PUSH_RETRY_DELAY=30`. Attestations are disabled to reduce registry uploads.
 
 The default target platforms are:
 
