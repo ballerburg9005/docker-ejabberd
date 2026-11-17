@@ -113,6 +113,9 @@ RUN for dir in lib/ejabberd-*/priv/bin; do \
         cp bin/captcha*.sh "$dir/"; \
     done
 
+# Fetch contributed module specs with Git rather than ejabberdctl's unauthenticated
+# GitHub API archive lookup, which is rate-limited on fresh multi-platform builds.
+# The downloaded sources are reused by ejabberdctl module_install below.
 # The two contributed registration modules require a running ejabberd node for
 # ejabberdctl module_install. Start a temporary private node during the build,
 # but with NO XMPP/HTTP listeners and NO EPMD. This avoids the port collisions
@@ -122,6 +125,8 @@ RUN set -eu; \
     printf 'hosts:\n  - localhost\nlisten: []\nmodules: {}\n' > /tmp/ejabberd-build.yml; \
     export EJABBERD_CONFIG_PATH=/tmp/ejabberd-build.yml; \
     export ERL_DIST_PORT=$((20000 + $(od -An -N2 -tu2 /dev/urandom) % 40000)); \
+    mkdir -p .ejabberd-modules/sources; \
+    git clone --depth 1 https://github.com/processone/ejabberd-contrib.git .ejabberd-modules/sources/ejabberd-contrib; \
     bin/ejabberdctl start; \
     ready=0; \
     for i in $(seq 1 90); do \
@@ -132,7 +137,6 @@ RUN set -eu; \
         tail -100 logs/ejabberd.log || true; \
         exit 1; \
     fi; \
-    bin/ejabberdctl modules_update_specs; \
     bin/ejabberdctl module_install mod_default_rooms; \
     bin/ejabberdctl module_install mod_default_contacts; \
     test -d .ejabberd-modules/mod_default_rooms/ebin; \
