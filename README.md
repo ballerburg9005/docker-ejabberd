@@ -42,8 +42,16 @@ cd ecs
 ```
 
 Both commands publish the MIX builder image **first**, then the ECS runtime
-image. For each, the command pushes both a versioned tag (`:26.09`) and
-`:latest`, retaining the original unversioned Docker Hub pull command.
+image. To work around Docker Hub `invalid content range` errors during large
+concurrent exports, each platform is **pushed individually** (for example,
+`:26.09-arm64`), with up to three retries. After all platforms are present,
+`docker buildx imagetools create` publishes the normal multi-platform tags:
+`:26.09` and `:latest`. The old unversioned Docker Hub pull command still works.
+This preserves the BuildKit cache, so restarting after a failed upload does not
+normally recompile the successfully cached layers. Override retry count with
+`PUSH_ATTEMPTS=5` or delay with `PUSH_RETRY_DELAY=30` if required.
+Buildx provenance and SBOM attestations are disabled for the publish step to
+avoid extra upload manifests; no runtime features are changed.
 
 The default target platforms are:
 
