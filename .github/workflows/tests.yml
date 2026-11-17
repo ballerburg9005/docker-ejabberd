@@ -2,44 +2,72 @@ name: Tests
 
 on:
   push:
-    paths-ignore:
-      - '**.md'
-      - '**.bat'
+    paths:
+      - '.github/workflows/tests.yml'
+      - 'ecs/**'
+      - 'mix/**'
+      - 'build-multiarch.sh'
   pull_request:
-    paths-ignore:
-      - '**.md'
-      - '**.bat'
+    paths:
+      - '.github/workflows/tests.yml'
+      - 'ecs/**'
+      - 'mix/**'
+      - 'build-multiarch.sh'
+  workflow_dispatch:
 
 jobs:
-  build:
-    name: Build
-    runs-on: ubuntu-20.04
-    strategy:
-      fail-fast: true
-      max-parallel: 1
-
+  smoke:
+    runs-on: ubuntu-24.04
+    services:
+      registry:
+        image: registry:2
+        ports:
+          - 5000:5000
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v2
-
-      - name: Build ecs image
+      - uses: actions/checkout@v4
+      - name: Setup buildx (local registry)
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+      - name: Validate scripts
         run: |
-            cd ecs
-            ./build.sh
-
-      - name: Run ecs image
+          sh -n build-multiarch.sh ecs/build.sh
+          grep -q 'linux/arm/v6' build-multiarch.sh
+          grep -q 'linux/arm64' build-multiarch.sh
+      - name: Build MIX (amd64 smoke)
+        uses: docker/build-push-action@v6
+        with:
+          context: mix
+          platforms: linux/amd64
+          push: true
+          tags: localhost:5000/ejabberd-mix:smoke
+      - name: Build ECS (amd64 smoke)
+        uses: docker/build-push-action@v6
+        with:
+          context: ecs
+          platforms: linux/amd64
+          build-args: |
+            VERSION=26.09
+            MIX_IMAGE=localhost:5000/ejabberd-mix:smoke
+          push: true
+          tags: localhost:5000/ejabberd-ecs:smoke
+      - name: Verify image, CAPTCHA, and modules
         run: |
-            docker images
-            docker run --name ejabberd -d -p 5222:5222 ejabberd/ecs:latest
-
-      - name: Wait ejabberd started
-        run: |
-            docker exec ejabberd bin/ejabberdctl started
-
-      - name: Check ecs results
-        run: |
-            docker ps -s
-            docker logs ejabberd
-            docker logs ejabberd | grep -q "Start accepting TCP connections" || exit 1
-            docker logs ejabberd | grep -q "error" && exit 1 || exit 0
-            docker logs ejabberd | grep -q "Error" && exit 1 || exit 0
+          set -eu
+          docker pull localhost:5000/ejabberd-ecs:smoke
+          docker run --name ejabberd-test -d -p 5222:5222 localhost:5000/ejabberd-ecs:smoke
+          for i in $(seq 1 90); do
+            if docker exec ejabberd-test bin/ejabberdctl started >/dev/null 2>&1; then break; fi
+            sleep 2
+          done
+          docker exec ejabberd-test bin/ejabberdctl started
+          docker exec ejabberd-test sh -ec '
+            test -x bin/captcha-ng.sh
+            test -d .ejabberd-modules/mod_default_rooms
+            test -d .ejabberd-modules/mod_default_contacts
+            bin/captcha-ng.sh 1234 > /tmp/captcha.png
+            test -s /tmp/captcha.png
+          '
+      - name: Container log
+        if: always()
+        run: docker logs ejabberd-test || true
