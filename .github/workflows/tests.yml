@@ -63,6 +63,7 @@ jobs:
           docker exec ejabberd-test bin/ejabberdctl started
           docker exec ejabberd-test sh -ec '
             test -x bin/captcha-ng.sh
+            test -x lib/ejabberd-21.7.0/priv/bin/captcha-ng.sh
             test -d .ejabberd-modules/mod_default_rooms
             test -d .ejabberd-modules/mod_default_contacts
             bin/captcha-ng.sh 1234 > /tmp/captcha.png
