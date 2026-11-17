@@ -78,8 +78,11 @@ Do not run it without checking the image names.
   temporarily starts one **with no XMPP or HTTP listening ports**, and with
   EPMD disabled via `ERL_DIST_PORT` (random per build). This does not rely on
   Docker's `--isolation` flag. Check simultaneous builds on your Buildx driver.
-- The 2021 Alpine 3.11 + Distillery build is replaced by upstream Alpine 3.24
+- The 2021 Alpine 3.11 + Distillery build is replaced by Alpine 3.23
   + `mix release`. The old hard-coded `21.07` version fallback is removed.
+- Alpine 3.24 is avoided for now: its Erlang/OTP 27 build crashes
+  with `Failed to set alternate signal stack` on some newer x86_64 CPUs.
+  Alpine 3.23 uses the older musl base; recheck when the release uses fixed OTP.
 - Upstream's Go-based `ejabberdapi`, `tini` entrypoint, and refreshed example
   configuration are used. The old binary bundled in this repository is removed.
 - `ecs/build.sh` still works, but now first publishes the required compatible
