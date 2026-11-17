@@ -51,8 +51,6 @@ RUN mkdir runtime \
 # Runtime container
 FROM docker.io/alpine:3.23
 ARG VERSION
-ARG VCS_REF
-ARG BUILD_DATE
 ENV TERM=xterm \
     LC_ALL=C.UTF-8 \
     LANG=en_US.UTF-8 \
@@ -61,18 +59,7 @@ ENV TERM=xterm \
     HOME=/home/ejabberd \
     PATH="$PATH:/home/ejabberd/bin" \
     VERSION=${VERSION:-latest}
-LABEL maintainer="ProcessOne <contact@process-one.net>" \
-    product="Ejabberd Community Server Official Docker Image" \
-    version=$VERSION \
-    org.label-schema.vcs-ref=$VCS_REF \
-    org.label-schema.vcs-url="https://github.com/processone/docker-ejabberd" \
-    org.label-schema.build-date=$BUILD_DATE \
-    org.label-schema.name="Ejabberd Community Server Official Docker Image" \
-    org.label-schema.description="Robust, Scalable and Extensible Realtime Server using XMPP, MQTT and SIP" \
-    org.label-schema.url="https://www.ejabberd.im/" \
-    org.label-schema.vendor="ProcessOne" \
-    org.label-schema.version=$VERSION \
-    org.label-schema.schema-version="1.0"
+
 
 # Create directory structure and user for ejabberd
 RUN addgroup ejabberd -g 9000 \
@@ -151,6 +138,24 @@ RUN set -eu; \
     test -d .ejabberd-modules/mod_default_rooms/ebin; \
     test -d .ejabberd-modules/mod_default_contacts/ebin; \
     bin/ejabberdctl stop
+
+# Build metadata is intentionally the LAST filesystem-independent step.
+# A changing VCS_REF or second-precision BUILD_DATE must never invalidate
+# apk installation, ejabberd compilation, or contributed module installation.
+ARG VCS_REF
+ARG BUILD_DATE
+LABEL maintainer="ProcessOne <contact@process-one.net>" \
+    product="Ejabberd Community Server Official Docker Image" \
+    version=$VERSION \
+    org.label-schema.vcs-ref=$VCS_REF \
+    org.label-schema.vcs-url="https://github.com/processone/docker-ejabberd" \
+    org.label-schema.build-date=$BUILD_DATE \
+    org.label-schema.name="Ejabberd Community Server Official Docker Image" \
+    org.label-schema.description="Robust, Scalable and Extensible Realtime Server using XMPP, MQTT and SIP" \
+    org.label-schema.url="https://www.ejabberd.im/" \
+    org.label-schema.vendor="ProcessOne" \
+    org.label-schema.version=$VERSION \
+    org.label-schema.schema-version="1.0"
 
 # Setup runtime environment
 USER ejabberd
