@@ -107,10 +107,16 @@ RUN chmod 755 bin/ejabberdctl bin/ejabberdapi bin/erl bin/captcha*.sh \
 COPY --chown=ejabberd:ejabberd conf conf/
 ADD --chown=ejabberd:ejabberd https://download.process-one.net/cacert.pem conf/cacert.pem
 
-# Keep the legacy private-bin CAPTCHA paths in addition to upstream's
-# $HOME/bin/ paths, so existing captcha_cmd settings continue to work.
+# Keep legacy version-specific CAPTCHA paths for existing ejabberd.yml
+# configurations, in addition to the stable /home/ejabberd/bin/ paths.
+# In particular, older installations refer to ejabberd-21.7.0/priv/bin.
 RUN for dir in lib/ejabberd-*/priv/bin; do \
         cp bin/captcha*.sh "$dir/"; \
+    done \
+    && for legacy in 21.7.0 21.07.0; do \
+        mkdir -p "lib/ejabberd-$legacy/priv/bin"; \
+        ln -sf /home/ejabberd/bin/captcha-ng.sh "lib/ejabberd-$legacy/priv/bin/captcha-ng.sh"; \
+        ln -sf /home/ejabberd/bin/captcha.sh "lib/ejabberd-$legacy/priv/bin/captcha.sh"; \
     done
 
 # Fetch contributed module specs with Git rather than ejabberdctl's unauthenticated
