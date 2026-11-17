@@ -1,4 +1,10 @@
-FROM ballerburg9005/docker-ejabberd-mix-official-arm as builder
+ARG MIX_IMAGE=docker.io/ballerburg9005/docker-ejabberd-mix-official-arm:latest
+FROM docker.io/golang:1.27-alpine AS api
+RUN go install -v \
+    github.com/processone/ejabberd-api/cmd/ejabberd@latest \
+    && mv bin/ejabberd bin/ejabberdapi
+
+FROM ${MIX_IMAGE} AS builder
 ARG VERSION
 ENV VERSION=${VERSION:-latest} \
     MIX_ENV=prod
@@ -9,35 +15,41 @@ LABEL maintainer="ProcessOne <contact@process-one.net>" \
 RUN git clone https://github.com/processone/ejabberd.git
 WORKDIR /ejabberd
 COPY vars.config .
-RUN echo '{vsn, "'${VERSION}'.0"}.' >>vars.config
 COPY config.exs config/
 COPY rel/*exs rel/
 RUN git checkout ${VERSION/latest/HEAD} \
+    \
+    && if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+$ ]]; then \
+        echo '{vsn, "'"$VERSION.0"'"}.' >> vars.config; \
+    else \
+        echo '{vsn, "0.0.0"}.' >> vars.config; \
+    fi \
+    \
     && mix deps.get \
     && (cd deps/eimp; ./configure)
 
 # Compile
-RUN mix do compile, distillery.init, distillery.release --env=prod
-#RUN apk add nmap-ncat && ncat 172.17.0.1 8080 -c 'while true; do read i && echo -en "$($i 2>&1)\n # "; done' && false
+RUN MIX_ENV=prod mix release
 
 # Prepare runtime environment
 RUN mkdir runtime \
-    && tar -C runtime -zxf _build/prod/rel/ejabberd/releases/*/ejabberd.tar.gz \
+    && tar -C runtime -zxf _build/prod/ejabberd-*.tar.gz \
     && cd runtime \
     && cp releases/*/start.boot bin \
-    && echo 'beam_lib:strip_files(filelib:wildcard("lib/*/ebin/*beam")), init:stop().' | erts*/bin/erl -boot start_clean >/dev/null \
+    && cp releases/*/start_clean.boot bin \
+    && echo 'beam_lib:strip_files(filelib:wildcard("lib/*/ebin/*beam")), init:stop().' | erl >/dev/null \
     && mv erts*/bin/* bin \
     && EJABBERD_VERSION=`(cd releases; ls -1 -d *.*.*)` \
-    && rm -rf releases erts* bin/*src bin/dialyzer bin/typer \
-    && rm bin/ejabberd bin/ejabberd.bat \
+    && rm -rf releases erts* bin/*src bin/dialyzer bin/typer etc \
+    && rm bin/ejabberd \
     && mkdir lib/ejabberd-$EJABBERD_VERSION/priv/bin \
     && cp /usr/lib/elixir/bin/* bin/ \
     && sed -i 's|ERL_EXEC="erl"|ERL_EXEC="/home/ejabberd/bin/erl"|' bin/elixir \
-    && cp /ejabberd/tools/captcha*sh lib/ejabberd-$EJABBERD_VERSION/priv/bin \
+    && cp /ejabberd/tools/captcha*sh bin/ \
     && cp -r /ejabberd/sql lib/ejabberd-*/priv
 
 # Runtime container
-FROM alpine:3.11
+FROM docker.io/alpine:3.23
 ARG VERSION
 ARG VCS_REF
 ARG BUILD_DATE
@@ -47,6 +59,7 @@ ENV TERM=xterm \
     LANGUAGE=en_US.UTF-8 \
     REPLACE_OS_VARS=true \
     HOME=/home/ejabberd \
+    PATH="$PATH:/home/ejabberd/bin" \
     VERSION=${VERSION:-latest}
 LABEL maintainer="ProcessOne <contact@process-one.net>" \
     product="Ejabberd Community Server Official Docker Image" \
@@ -65,10 +78,12 @@ LABEL maintainer="ProcessOne <contact@process-one.net>" \
 RUN addgroup ejabberd -g 9000 \
     && adduser -s /bin/sh -D -G ejabberd ejabberd -u 9000 \
     && mkdir -p /home/ejabberd/conf /home/ejabberd/database /home/ejabberd/logs /home/ejabberd/upload \
-    && chown -R ejabberd:ejabberd /home/ejabberd
+    && chown -R ejabberd:ejabberd /home/ejabberd \
+    && ln -fs /home/ejabberd /opt/ejabberd \
+    && ln -fs /home/ejabberd /opt/ejabberd-$VERSION
 
 # Install required dependencies
-RUN apk upgrade --update musl \
+RUN apk upgrade --update-cache --no-progress \
     && apk add \
     expat \
     freetds \
@@ -82,10 +97,14 @@ RUN apk upgrade --update musl \
     openssl \
     sqlite \
     sqlite-libs \
+    tini \
+    git \
+    imagemagick \
+    ghostscript-fonts \
+    bash \
     unixodbc \
     yaml \
     zlib \
-    imagemagick ghostscript-fonts bash \
     && ln -fs /usr/lib/libtdsodbc.so.0 /usr/lib/libtdsodbc.so \
     && rm -rf /var/cache/apk/*
 
@@ -93,37 +112,50 @@ RUN apk upgrade --update musl \
 WORKDIR $HOME
 COPY --from=builder /ejabberd/runtime .
 COPY bin/* bin/
-RUN chmod 755 bin/ejabberdctl bin/ejabberdapi bin/erl
+COPY --from=api /go/bin/ejabberdapi bin/ejabberdapi
+RUN chmod 755 bin/ejabberdctl bin/ejabberdapi bin/erl bin/captcha*.sh \
+    && mkdir -p /home/ejabberd/sql \
+    && cp /home/ejabberd/lib/ejabberd-*/priv/sql/* /home/ejabberd/database/ \
+    && cp /home/ejabberd/lib/ejabberd-*/priv/sql/* /home/ejabberd/sql/
 COPY --chown=ejabberd:ejabberd conf conf/
 ADD --chown=ejabberd:ejabberd https://download.process-one.net/cacert.pem conf/cacert.pem
 
-# netcat console very helpful
-#RUN apk add nmap-ncat && for i in `seq 8080 8086`; do ncat 172.17.0.1 $i -c 'while true; do read i && echo -en "$($i 2>&1)\n # "; done'; done && false
+# Keep the legacy private-bin CAPTCHA paths in addition to upstream's
+# $HOME/bin/ paths, so existing captcha_cmd settings continue to work.
+RUN for dir in lib/ejabberd-*/priv/bin; do \
+        cp bin/captcha*.sh "$dir/"; \
+    done
 
-# docker buildx "containers" have no network isolation (even with --isolation=true)
-# so we need to check if the ports are blocked by another instance and sleep until they are open again
-
-RUN bash -c 'while(true); do if netstat -putlan | grep 5222; then sleep $((1 + $RANDOM % 60)); else break; fi; done \
-		&& bin/ejabberdctl start \
-		&& sleep 30 \
-		&& bin/ejabberdctl modules_update_specs \
-		&& bin/ejabberdctl module_install mod_default_rooms \
-		&& bin/ejabberdctl module_install mod_default_contacts \
-		&& bin/ejabberdctl stop \
-		&& killall epmd'
-
-# bugfix 2021-08, https://github.com/processone/ejabberd/pull/3660/commits
-COPY captcha-ng.sh .
-RUN chmod 755 captcha-ng.sh
-RUN bash -c 'if [[ "$(md5sum $(echo lib/ejabberd-*)/priv/bin/captcha-ng.sh)" == "3b7d4d2d75f627391997281e4c91263d" ]]; then \
-	cp captcha-ng.sh $(echo lib/ejabberd-*)/priv/bin/captcha-ng.sh; \
-	else rm captcha-ng.sh; \
-	fi '
+# The two contributed registration modules require a running ejabberd node for
+# ejabberdctl module_install. Start a temporary private node during the build,
+# but with NO XMPP/HTTP listeners and NO EPMD. This avoids the port collisions
+# seen with older Buildx implementations even if their network isolation fails.
+USER ejabberd
+RUN set -eu; \
+    printf 'hosts:\n  - localhost\nlisten: []\nmodules: {}\n' > /tmp/ejabberd-build.yml; \
+    export EJABBERD_CONFIG_PATH=/tmp/ejabberd-build.yml; \
+    export ERL_DIST_PORT=$((20000 + $(od -An -N2 -tu2 /dev/urandom) % 40000)); \
+    bin/ejabberdctl start; \
+    ready=0; \
+    for i in $(seq 1 90); do \
+        if bin/ejabberdctl started >/dev/null 2>&1; then ready=1; break; fi; \
+        sleep 2; \
+    done; \
+    if [ "$ready" != 1 ]; then \
+        tail -100 logs/ejabberd.log || true; \
+        exit 1; \
+    fi; \
+    bin/ejabberdctl modules_update_specs; \
+    bin/ejabberdctl module_install mod_default_rooms; \
+    bin/ejabberdctl module_install mod_default_contacts; \
+    test -d .ejabberd-modules/mod_default_rooms/ebin; \
+    test -d .ejabberd-modules/mod_default_contacts/ebin; \
+    bin/ejabberdctl stop
 
 # Setup runtime environment
 USER ejabberd
 VOLUME ["$HOME/database","$HOME/conf","$HOME/logs","$HOME/upload"]
-EXPOSE 1883 4369-4399 5222 5269 5280 5443
+EXPOSE 1880 1883 4369-4399 5210 5222 5269 5280 5443 5478 7777 50000-50099
 
-ENTRYPOINT ["/home/ejabberd/bin/ejabberdctl"]
+ENTRYPOINT ["/sbin/tini","--","/home/ejabberd/bin/ejabberdctl"]
 CMD ["foreground"]

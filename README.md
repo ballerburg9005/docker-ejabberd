@@ -1,55 +1,108 @@
-What is this?
-=============
+# docker-ejabberd — multi-architecture fork
 
-This repository is just a fork with minor modifications of [the official Docker build of ejabberd](https://github.com/processone/docker-ejabberd).
+Fork of [processone/docker-ejabberd](https://github.com/processone/docker-ejabberd),
+synchronized with upstream October 2026 Docker packaging, with the ejabberd
+**26.09** release as the default build target.
 
-You will find more instructions there.
+## Compatibility
 
-Check out the [Readme](https://hub.docker.com/r/ballerburg9005/docker-ejabberd-ecs-official-arm ) I wrote on Dockerhub for more important information.
+The published Docker Hub names are unchanged:
 
-How to build the official Docker images
-=======================================
+- `ballerburg9005/docker-ejabberd-mix-official-arm`
+- `ballerburg9005/docker-ejabberd-ecs-official-arm`
 
-1. docker buildx build --platform linux/arm64,linux/armhf,linux/amd64 --push -t ballerburg9005/docker-ejabberd-mix-official-arm mix
-2. docker buildx build --platform linux/arm64,linux/armhf,linux/amd64 --build-arg VERSION=${1:-$(date +%y%m -d '1 month ago')} --build-arg VCS_REF=\`git rev-parse --short HEAD\` --build-arg BUILD_DATE=\`date -u +"%Y-%m-%dT%H:%M:%SZ"'\` --push -t ballerburg9005/docker-ejabberd-ecs-official-arm ecs #this is the command from ecs/build.sh
+The image continues to run as UID/GID **9000:9000** with
+`/home/ejabberd/{conf,database,logs,upload}` volumes,
+`/home/ejabberd/bin/ejabberdctl` entrypoint, and the existing XMPP ports.
+The two contributed registration modules (`mod_default_rooms` and
+`mod_default_contacts`) remain preinstalled. CAPTCHA supports both the
+upstream `/home/ejabberd/bin/captcha-ng.sh` location and the old
+`lib/ejabberd-*/priv/bin/captcha-ng.sh` location.
 
+**Back up your persisted configuration and database before upgrading an
+existing 2021-era ejabberd deployment.** This preserves the image's external
+interface, not ejabberd's old database schema or deprecated config syntax.
+See the [official upgrade documentation](https://docs.ejabberd.im/admin/upgrade/).
 
-If buildx is not working for you, try this quick tutorial to set it up:
+## Build and publish (Buildx required)
 
-https://ballerburg.us.to/index.php/howto-multi-architecture-builds-in-docker/
+Login to Docker Hub and select an appropriate multi-platform builder, with
+QEMU/binfmt emulation or native ARM worker nodes. Then from the repository root:
 
-
-<details>
-  <summary>Click if you don't want to use this fork but the official repo</summary>
-  
-.
-  
-In order to build ejabberd with ARM included, you simply have to adapt some three corresponding lines in build.sh and the Dockerfile inside the ecs folder:
-
-1. FROM ballerburg9005/docker-ejabberd-mix-official-arm as builder
-2. current=$(date +%y.07) # I had to use the previous month "07" in the version string, because there was not a git branch yet for this month
-3. docker buildx build --platform linux/arm64,linux/armhf 
-
-First build the mix image using buildx like suggested in #3, and then the ecs image via ./build.sh with your mix image referenced as demonstrated in #1.
-	
-If you want the captcha, you have to add the packages suggested in the Readme to the list of packages in the ecs image at the end (not mix!).
-
-Also you can add those extra modules. Add this right before setup runtime environment:
-
-```
-# docker buildx "containers" have no network isolation (even with --isolation=true)
-# so we need to check if the ports are blocked by another instance and sleep until they are open again
-
-RUN bash -c 'while(true); do if netstat -putlan | grep 5222; then sleep $((1 + $RANDOM % 60)); else break; fi; done \
-		&& bin/ejabberdctl start \
-		&& sleep 30 \
-		&& bin/ejabberdctl modules_update_specs \
-		&& bin/ejabberdctl module_install mod_default_rooms \
-		&& bin/ejabberdctl module_install mod_default_contacts \
-		&& bin/ejabberdctl stop \
-		&& killall epmd'
+```sh
+docker login
+./build-multiarch.sh 26.09
 ```
 
-Lastly, there is a minor bug in the registration captcha-ng.sh file. You have to change two lines. See this PR I made: https://github.com/processone/ejabberd/pull/3660 . Even if you don't fix it, it will still work most of the time.
+The old entry point also works:
 
-</details>
+```sh
+cd ecs
+./build.sh 26.09
+```
+
+Both commands publish the MIX builder image **first**, then the ECS runtime
+image. For each, the command pushes both a versioned tag (`:26.09`) and
+`:latest`, retaining the original unversioned Docker Hub pull command.
+
+The default target platforms are:
+
+```
+linux/amd64,linux/arm64,linux/arm/v6,linux/arm/v7
+```
+
+ARM v6 is the Alpine `armhf` architecture originally requested; ARM v7 is
+included as well. To restrict architectures or use a testing registry:
+
+```sh
+PLATFORMS=linux/amd64,linux/arm64 \
+MIX_IMAGE=yourname/test-ejabberd-mix \
+ECS_IMAGE=yourname/test-ejabberd-ecs \
+./build-multiarch.sh 26.09
+```
+
+**Important:** This command uses `--push`. It publishes to the named
+registry; it does not merely create a local single-platform Docker image.
+Do not run it without checking the image names.
+
+## Why the old hacks disappeared
+
+- [CAPTCHA fix PR #3660](https://github.com/processone/ejabberd/pull/3660)
+  merged upstream in August 2021. The release's `captcha-ng.sh` is the same
+  as this fork's old patched script. The fork copy and checksum substitution
+  are no longer necessary.
+- `imagemagick`, `ghostscript-fonts`, and `bash` are still installed for
+  the sample CAPTCHA generators.
+- The randomized `netstat`/sleep workaround and netcat reverse consoles are
+  removed. `module_install` still needs a running ejabberd node, so the image
+  temporarily starts one **with no XMPP or HTTP listening ports**, and with
+  EPMD disabled via `ERL_DIST_PORT` (random per build). This does not rely on
+  Docker's `--isolation` flag. Check simultaneous builds on your Buildx driver.
+- The 2021 Alpine 3.11 + Distillery build is replaced by Alpine 3.23
+  + `mix release`. The old hard-coded `21.07` version fallback is removed.
+- Alpine 3.24 is avoided for now: its Erlang/OTP 27 build crashes
+  with `Failed to set alternate signal stack` on some newer x86_64 CPUs.
+  Alpine 3.23 uses the older musl base; recheck when the release uses fixed OTP.
+- Upstream's Go-based `ejabberdapi`, `tini` entrypoint, and refreshed example
+  configuration are used. The old binary bundled in this repository is removed.
+- `ecs/build.sh` still works, but now first publishes the required compatible
+  multi-architecture MIX image. This avoids referencing an old builder image.
+
+### Verify the published image
+
+```sh
+docker buildx imagetools inspect ballerburg9005/docker-ejabberd-ecs-official-arm:26.09
+docker run --rm --platform linux/amd64 --entrypoint sh \
+  ballerburg9005/docker-ejabberd-ecs-official-arm:26.09 \
+  -c 'test -x bin/captcha-ng.sh && test -d .ejabberd-modules/mod_default_rooms && test -d .ejabberd-modules/mod_default_contacts'
+```
+
+## Status
+
+The repository migration was prepared by comparing against upstream and
+checking the latest source. A real Docker build, full ARM/QEMU validation,
+CAPTCHA rendering test, concurrent-build test, and a deployment migration test
+are necessary before replacing a production container. GitHub Actions runs
+an amd64 smoke test; a manual full multi-architecture build is still required.
+
+For upstream documentation see [processone/docker-ejabberd](https://github.com/processone/docker-ejabberd).

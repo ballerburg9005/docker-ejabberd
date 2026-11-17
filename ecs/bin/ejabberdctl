@@ -2,13 +2,12 @@
 
 # define default configuration
 POLL=true
-SMP=enable
 ERL_MAX_PORTS=32000
 ERL_PROCESSES=250000
 ERL_MAX_ETS_TABLES=1400
 FIREWALL_WINDOW="4370-4379"
 INET_DIST_INTERFACE=""
-ERLANG_NODE=ejabberd@$(hostname -s)
+ERLANG_NODE=ejabberd@localhost
 EJABBERD_BYPASS_WARNINGS=true
 
 # define default environment variables
@@ -69,8 +68,12 @@ done
 [ -f "$EJABBERDCTL_CONFIG_PATH" ] && . "$EJABBERDCTL_CONFIG_PATH"
 [ -n "$ERLANG_NODE_ARG" ] && ERLANG_NODE="$ERLANG_NODE_ARG"
 [ "$ERLANG_NODE" = "${ERLANG_NODE%.*}" ] && S="-s"
+: "${SPOOL_DIR:="$HOME_DIR/database"}"
 : "${EJABBERD_LOG_PATH:="$LOGS_DIR/ejabberd.log"}"
-: "${SPOOL_DIR:="$HOME_DIR/database/$ERLANG_NODE"}"
+
+# backward support for old mnesia spool dir path
+: "${SPOOL_DIR_OLD:="$SPOOL_DIR/$ERLANG_NODE"}"
+[ -r "$SPOOL_DIR_OLD/schema.DAT" ] && [ ! -r "$SPOOL_DIR/schema.DAT" ] && SPOOL_DIR="$SPOOL_DIR_OLD"
 
 [ -n "$ERLANG_COOKIE" ] && [ ! -f "$HOME"/.erlang.cookie ] && {
     echo "$ERLANG_COOKIE" > "$HOME"/.erlang.cookie
@@ -78,7 +81,7 @@ done
 }
 
 # define erl parameters
-ERLANG_OPTS="+K $POLL -smp $SMP +P $ERL_PROCESSES $ERL_OPTIONS"
+ERLANG_OPTS="-boot_var RELEASE_LIB ../lib +K $POLL -smp $SMP +P $ERL_PROCESSES $ERL_OPTIONS"
 if [ -n "$FIREWALL_WINDOW" ] ; then
     ERLANG_OPTS="$ERLANG_OPTS -kernel inet_dist_listen_min ${FIREWALL_WINDOW%-*} inet_dist_listen_max ${FIREWALL_WINDOW#*-}"
 fi
@@ -88,6 +91,7 @@ if [ -n "$INET_DIST_INTERFACE" ] ; then
         ERLANG_OPTS="$ERLANG_OPTS -kernel inet_dist_use_interface $INET_DIST_INTERFACE2"
     fi
 fi
+[ -n "$ERL_DIST_PORT" ] && ERLANG_OPTS="$ERLANG_OPTS -erl_epmd_port $ERL_DIST_PORT -start_epmd false"
 ERL_LIBS="$ROOT_DIR/lib"
 # if vm.args file exists in config directory, pass it to Erlang VM
 [ -f "$VMARGS" ] && ERLANG_OPTS="$ERLANG_OPTS -args_file $VMARGS"
@@ -95,9 +99,12 @@ ERL_CRASH_DUMP="$LOGS_DIR"/erl_crash_$(date "+%Y%m%d-%H%M%S").dump
 ERL_INETRC="$ETC_DIR"/inetrc
 
 # define ejabberd parameters
-EJABBERD_OPTS="$EJABBERD_OPTS\
-$(sed '/^log_rotate_size/!d;s/:[ \t]*\([0-9]\{1,\}\).*/ \1/;s/:[ \t]*\(infinity\).*/ \1/;s/^/ /' "$EJABBERD_CONFIG_PATH")\
-$(sed '/^log_rotate_count/!d;s/:[ \t]*\([0-9]*\).*/ \1/;s/^/ /' "$EJABBERD_CONFIG_PATH")"
+EJABBERD_OPTS="\
+$(sed '/^log_rotate_size/!d;s/:[ \t]*\([0-9]\{1,\}\).*/ \1/;s/:[ \t]*\(infinity\).*/ \1 /;s/^/ /' "$EJABBERD_CONFIG_PATH")\
+$(sed '/^log_rotate_count/!d;s/:[ \t]*\([0-9]*\).*/ \1 /;s/^/ /' "$EJABBERD_CONFIG_PATH")\
+$(sed '/^log_burst_limit_count/!d;s/:[ \t]*\([0-9]*\).*/ \1 /;s/^/ /' "$EJABBERD_CONFIG_PATH")\
+$(sed '/^log_burst_limit_window_time/!d;s/:[ \t]*\([0-9]*[a-z]*\).*/ \1 /;s/^/ /' "$EJABBERD_CONFIG_PATH")\
+$EJABBERD_OPTS"
 [ -n "$EJABBERD_OPTS" ] && EJABBERD_OPTS="-ejabberd $EJABBERD_OPTS"
 EJABBERD_OPTS="-mnesia dir \"$SPOOL_DIR\" $MNESIA_OPTIONS $EJABBERD_OPTS -s ejabberd"
 
@@ -107,12 +114,18 @@ export EJABBERD_LOG_PATH
 export EJABBERD_PID_PATH
 export ERL_CRASH_DUMP
 export ERL_EPMD_ADDRESS
+export ERL_DIST_PORT
 export ERL_INETRC
 export ERL_MAX_PORTS
 export ERL_MAX_ETS_TABLES
 export CONTRIB_MODULES_PATH
 export CONTRIB_MODULES_CONF_DIR
 export ERL_LIBS
+
+set_dist_client()
+{
+    [ -n "$ERL_DIST_PORT" ] && ERLANG_OPTS="$ERLANG_OPTS -dist_listen false"
+}
 
 # run command either directly or via su $INSTALLUSER
 run_cmd()
@@ -148,14 +161,6 @@ exec_iex()
 # usage
 debugwarning()
 {
-    if [ "$OSTYPE" != "cygwin" ] && [ "$OSTYPE" != "win32" ] ; then
-        if [ "a$TERM" = "a" ] || [ "$TERM" = "dumb" ] ; then
-            echo "Terminal type not supported."
-            echo "You may have to set the TERM environment variable to fix this."
-            exit 8
-        fi
-    fi
-
     if [ "$EJABBERD_BYPASS_WARNINGS" != "true" ] ; then
         echo "--------------------------------------------------------------------"
         echo ""
@@ -166,14 +171,16 @@ debugwarning()
         echo "Please be extremely cautious with your actions,"
         echo "and exit immediately if you are not completely sure."
         echo ""
-        echo "To detach this shell from ejabberd, press:"
-        echo "  control+c, control+c"
+        echo "To exit and detach this shell from ejabberd, press:"
+        echo "  control+g and then q"
         echo ""
+        #vt100 echo "Please do NOT use control+c in this debug shell !"
+        #vt100 echo ""
         echo "--------------------------------------------------------------------"
         echo "To bypass permanently this warning, add to ejabberdctl.cfg the line:"
         echo "  EJABBERD_BYPASS_WARNINGS=true"
         echo "Press return to continue"
-        read -r input
+        read -r _
         echo ""
     fi
 }
@@ -189,15 +196,50 @@ livewarning()
         echo "Please be extremely cautious with your actions,"
         echo "and exit immediately if you are not completely sure."
         echo ""
-        echo "To exit this LIVE mode and stop ejabberd, press:"
-        echo "  q().  and press the Enter key"
+        echo "To stop ejabberd gracefully:"
+        echo "  ejabberd:stop()."
+        echo "To quit erlang immediately, press:"
+        echo "  control+g and then q"
         echo ""
         echo "--------------------------------------------------------------------"
         echo "To bypass permanently this warning, add to ejabberdctl.cfg the line:"
         echo "  EJABBERD_BYPASS_WARNINGS=true"
         echo "Press return to continue"
-        read -r input
+        read -r _
         echo ""
+    fi
+}
+
+check_etop_result()
+{
+    result=$?
+    if [ $result -eq 1 ] ; then
+        echo ""
+        echo "It seems there was some problem running 'ejabberdctl etop'."
+        echo "Is the error message something like this?"
+        echo "  Failed to load module 'etop' because it cannot be found..."
+        echo "Then probably ejabberd was compiled with development tools disabled."
+        echo "To use 'etop', recompile ejabberd with: ./configure --enable-tools"
+        echo ""
+        exit $result
+    fi
+}
+
+check_iex_result()
+{
+    result=$?
+    if [ $result -eq 127 ] ; then
+        echo ""
+        echo "It seems there was some problem finding 'iex' binary from Elixir."
+        echo "Probably ejabberd was compiled with Rebar3 and Elixir disabled, like:"
+        echo "  ./configure"
+        echo "which is equivalent to:"
+        echo "  ./configure --with-rebar=rebar3 --disable-elixir"
+        echo "To use 'iex', recompile ejabberd enabling Elixir or using Mix:"
+        echo "  ./configure --enable-elixir"
+        echo "  ./configure --with-rebar=mix"
+        echo ""
+        exit $result
     fi
 }
 
@@ -205,12 +247,18 @@ help()
 {
     echo ""
     echo "Commands to start an ejabberd node:"
-    echo "  start      Start an ejabberd node in server mode"
-    echo "  debug      Attach an interactive Erlang shell to a running ejabberd node"
-    echo "  iexdebug   Attach an interactive Elixir shell to a running ejabberd node"
-    echo "  live       Start an ejabberd node in live (interactive) mode"
-    echo "  iexlive    Start an ejabberd node in live (interactive) mode, within an Elixir shell"
-    echo "  foreground Start an ejabberd node in server mode (attached)"
+    echo "  start            Start in server mode"
+    echo "  foreground       Start in server mode (attached)"
+    echo "  foreground-quiet Start in server mode (attached), show only critical messages"
+    echo "  live             Start in interactive mode, with Erlang shell"
+    echo "  iexlive          Start in interactive mode, with Elixir shell"
+    echo ""
+    echo "Commands to interact with a running ejabberd node:"
+    echo "  debug            Attach an interactive Erlang shell to a running node"
+    echo "  iexdebug         Attach an interactive Elixir shell to a running node"
+    echo "  etop             Attach to a running node and start Erlang Top"
+    echo "  ping             Send ping to the node, returns pong or pang"
+    echo "  started|stopped  Wait for the node to fully start|stop"
     echo ""
     echo "Optional parameters when starting an ejabberd node:"
     echo "  --config-dir dir   Config ejabberd:    $ETC_DIR"
@@ -237,14 +285,17 @@ uid()
 # stop epmd if there is no other running node
 stop_epmd()
 {
+    [ -n "$ERL_DIST_PORT" ] && return
     "$EPMD" -names 2>/dev/null | grep -q name || "$EPMD" -kill >/dev/null
 }
 
 # make sure node not already running and node name unregistered
 # if all ok, ensure runtime directory exists and make it current directory
-# then (docker case) make .sql files available on database volume
 check_start()
 {
+    ECSIMAGE_DBPATH=$HOME/database/$ERLANG_NODE
+    [ ! -d "$ECSIMAGE_DBPATH" ] && ln -s $HOME/database $HOME/database/$ERLANG_NODE
+    [ -n "$ERL_DIST_PORT" ] && return
     "$EPMD" -names 2>/dev/null | grep -q " ${ERLANG_NODE%@*} " && {
         pgrep -f "$ERLANG_NODE" >/dev/null && {
             echo "ERROR: The ejabberd node '$ERLANG_NODE' is already running."
@@ -258,7 +309,6 @@ check_start()
         }
         "$EPMD" -kill >/dev/null
     }
-    cp "$HOME_DIR"/lib/ejabberd-*/priv/sql/* "$HOME_DIR/database/"
 }
 
 post_waiter_fork()
@@ -278,8 +328,19 @@ post_waiter_loop()
     LIST=$@
     HEAD=${LIST%% ; *}
     TAIL=${LIST#* ; }
-    echo ":> ejabberdctl $HEAD"
-    $0 $HEAD
+    HEAD2=${HEAD#\! *}
+    echo ":> ejabberdctl $HEAD2"
+    $0 $HEAD2
+    ctlstatus=$?
+    if [ $ctlstatus -ne 0 ] ; then
+        if [ "$HEAD" != "$HEAD2" ] ; then
+            echo ":> FAILURE in command '$HEAD2' !!! Ignoring result"
+        else
+            echo ":> FAILURE in command '$HEAD' !!! Stopping ejabberd..."
+            $0 halt > /dev/null
+            exit $ctlstatus
+        fi
+    fi
     [ "$HEAD" = "$TAIL" ] || post_waiter_loop $TAIL
 }
 
@@ -334,16 +395,19 @@ case $1 in
         ;;
     debug)
         debugwarning
+        set_dist_client
         exec_erl "$(uid debug)" -hidden -remsh "$ERLANG_NODE" \
                  -boot start_clean
         ;;
     etop)
+        set_dist_client
         exec_erl "$(uid top)" -hidden -node "$ERLANG_NODE" -s etop \
                  -s erlang halt -output text \
                  -boot start_clean
         ;;
     iexdebug)
         debugwarning
+        set_dist_client
         exec_iex "$(uid debug)" --remsh "$ERLANG_NODE" --boot start_clean
         ;;
     iexlive)
@@ -353,21 +417,25 @@ case $1 in
     ping)
         PEER=${2:-$ERLANG_NODE}
         [ "$PEER" = "${PEER%.*}" ] && PS="-s"
+        set_dist_client
         exec_cmd "$ERL" ${PS:--}name "$(uid ping "$(hostname $PS)")" $ERLANG_OPTS \
                  -noinput -hidden -eval 'io:format("~p~n",[net_adm:ping('"'$PEER'"')])' \
                  -s erlang halt -output text \
                  -boot start_clean
         ;;
     started)
+        set_dist_client
         wait_status 0 30 2 # wait 30x2s before timeout
         ;;
     stopped)
+        set_dist_client
         wait_status 3 30 2 && stop_epmd # wait 30x2s before timeout
         ;;
     post_waiter)
         post_waiter_waiting
         ;;
     *)
+        set_dist_client
         run_erl "$(uid ctl)" -hidden -noinput -boot start_clean \
                  -s ejabberd_ctl -extra "$ERLANG_NODE" $NO_TIMEOUT "$@"
         result=$?
