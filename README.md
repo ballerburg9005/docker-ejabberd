@@ -74,9 +74,10 @@ Do not run it without checking the image names.
 - `imagemagick`, `ghostscript-fonts`, and `bash` are still installed for
   the sample CAPTCHA generators.
 - The randomized `netstat`/sleep workaround and netcat reverse consoles are
-  removed. The build still starts ejabberd temporarily to install the two
-  contributed modules, but under modern BuildKit RUN network isolation.
-  Parallel-build isolation **must be checked on your Buildx driver**.
+  removed. `module_install` still needs a running ejabberd node, so the image
+  temporarily starts one **with no XMPP or HTTP listening ports**, and with
+  EPMD disabled via `ERL_DIST_PORT` (random per build). This does not rely on
+  Docker's `--isolation` flag. Check simultaneous builds on your Buildx driver.
 - The 2021 Alpine 3.11 + Distillery build is replaced by upstream Alpine 3.24
   + `mix release`. The old hard-coded `21.07` version fallback is removed.
 - Upstream's Go-based `ejabberdapi`, `tini` entrypoint, and refreshed example
