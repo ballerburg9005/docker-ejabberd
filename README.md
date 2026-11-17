@@ -15,9 +15,12 @@ The image continues to run as UID/GID **9000:9000** with
 `/home/ejabberd/{conf,database,logs,upload}` volumes,
 `/home/ejabberd/bin/ejabberdctl` entrypoint, and the existing XMPP ports.
 The two contributed registration modules (`mod_default_rooms` and
-`mod_default_contacts`) remain preinstalled. CAPTCHA supports both the
-upstream `/home/ejabberd/bin/captcha-ng.sh` location and the old
-`lib/ejabberd-*/priv/bin/captcha-ng.sh` location.
+`mod_default_contacts`) remain preinstalled. CAPTCHA supports the stable
+`/home/ejabberd/bin/captcha-ng.sh` path, the new version-specific path,
+and historical `lib/ejabberd-21.7.0/priv/bin/captcha-ng.sh` (also
+`21.07.0`) by compatibility symlinks. For persisted configurations,
+prefer changing `captcha_cmd` to the stable path once, avoiding reliance
+on any version-specific directory.
 
 **Back up your persisted configuration and database before upgrading an
 existing 2021-era ejabberd deployment.** This preserves the image's external
